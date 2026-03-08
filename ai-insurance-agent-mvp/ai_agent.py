@@ -16,18 +16,18 @@ def get_client():
     global _client
     if _client is None:
         if not config.GEMINI_API_KEY:
-            raise ValueError("GEMINI_API_KEY not set in .env")
-        genai.configure(api_key=config.GEMINI_API_KEY)
-        _client = genai.GenerativeModel("gemini-2.5-flash")
+            raise ValueError("GEMINI_API_KEY not set in .env or Streamlit secrets")
+        _client = genai.Client(api_key=config.GEMINI_API_KEY)
     return _client
 
 
 def _call_gemini(prompt: str, max_tokens: int = 512) -> str:
     """Call Gemini API and return text response."""
-    model = get_client()
-    response = model.generate_content(
-        prompt,
-        generation_config=genai.GenerationConfig(max_output_tokens=max_tokens)
+    client = get_client()
+    response = client.models.generate_content(
+        model="gemini-2.0-flash",
+        contents=prompt,
+        config=types.GenerateContentConfig(max_output_tokens=max_tokens)
     )
     return response.text.strip()
 
@@ -192,7 +192,7 @@ def _default_script(customer: Dict, policy: Dict) -> str:
 "Namaste, may I speak with {customer['full_name']}? This is an automated call from {config.COMPANY_NAME} regarding your policy {policy['policy_number']}."
 
 2. MAIN MESSAGE:
-"We're reaching out because your premium of INR {float(policy['premium_amount']):,.2f} was due on {policy['due_date']}. To maintain your coverage, please make your payment at the earliest."
+"We are reaching out because your premium of INR {float(policy['premium_amount']):,.2f} was due on {policy['due_date']}. To maintain your coverage, please make your payment at the earliest."
 
 3. HANDLE RESPONSE:
 "If you have already made the payment, please disregard this message. If you need assistance, please call us at {config.COMPANY_PHONE}."
