@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from typing import Dict, Optional, List
 
 from google import genai
@@ -21,7 +22,7 @@ def get_client():
     return _client
 
 
-def _call_gemini(prompt: str, max_tokens: int = 512) -> str:
+def _call_gemini(prompt: str, max_tokens: int = 1024) -> str:
     """Call Gemini API and return text response."""
     client = get_client()
     response = client.models.generate_content(
@@ -30,6 +31,49 @@ def _call_gemini(prompt: str, max_tokens: int = 512) -> str:
         config=types.GenerateContentConfig(max_output_tokens=max_tokens)
     )
     return response.text.strip()
+
+
+def _extract_json(text: str) -> dict:
+    """Robustly extract JSON from Gemini response regardless of formatting."""
+    text = text.strip()
+
+    # Try 1: direct parse
+    try:
+        return json.loads(text)
+    except Exception:
+        pass
+
+    # Try 2: extract from ```json ... ``` block
+    match = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
+    if match:
+        try:
+            return json.loads(match.group(1).strip())
+        except Exception:
+            pass
+
+    # Try 3: find outermost { }
+    start = text.find("{")
+    end = text.rfind("}") + 1
+    if start != -1 and end > start:
+        try:
+            return json.loads(text[start:end])
+        except Exception:
+            pass
+
+    # Try 4: fix trailing commas and single quotes
+    try:
+        cleaned = re.sub(r",\s*}", "}", text)
+        cleaned = re.sub(r",\s*]", "]", cleaned)
+        start = cleaned.find("{")
+        end = cleaned.rfind("}") + 1
+        if start != -1 and end > start:
+            return json.loads(cleaned[start:end])
+    except Exception:
+        pass
+
+    # Fallback
+    logger.warning("Could not parse JSON from Gemini response: %s", text[:300])
+    return {"outcome": "unknown", "intent_tags": [], "summary": text[:200], "language": "en"}
 
 
 def classify_outcome(transcript: str) -> Dict:
@@ -45,26 +89,22 @@ TRANSCRIPT:
 Return a JSON object with EXACTLY these keys:
 {{
   "outcome": one of ["paid", "promise_to_pay", "callback_requested", "unreachable", "voicemail", "disputed", "escalated", "do_not_call"],
-  "intent_tags": [list of 1-5 short intent descriptors, e.g. "acknowledged_debt", "requested_extension", "denied_ownership"],
+  "intent_tags": ["list", "of", "1-5", "short", "intent", "descriptors"],
   "summary": "2-3 sentence factual summary of the call in English",
   "language": "2-letter ISO language code detected (e.g. en, hi, ta)",
   "promise_date": "YYYY-MM-DD if customer promised to pay on a specific date, else null",
   "promise_amount": "numeric amount if mentioned, else null",
   "callback_datetime": "YYYY-MM-DD HH:MM if callback scheduled, else null",
-  "escalation_flag": true or false,
-  "escalation_reason": "reason if escalation_flag is true, else null",
-  "sentiment": one of ["positive", "neutral", "negative", "hostile"]
+  "escalation_flag": false,
+  "escalation_reason": null,
+  "sentiment": "positive or neutral or negative or hostile"
 }}
 
-Respond with ONLY the JSON object, no preamble or markdown backticks."""
+IMPORTANT: Respond with ONLY the raw JSON object. No markdown, no backticks, no explanation."""
 
     try:
-        text = _call_gemini(prompt, max_tokens=512)
-        text = text.replace("```json", "").replace("```", "").strip()
-        return json.loads(text)
-    except json.JSONDecodeError:
-        logger.warning("Failed to parse NLP classification JSON")
-        return {"outcome": "unknown", "intent_tags": [], "summary": transcript[:200], "language": "en"}
+        text = _call_gemini(prompt, max_tokens=1024)
+        return _extract_json(text)
     except Exception as e:
         logger.error("NLP classification error: %s", e)
         return {"outcome": "unknown", "intent_tags": [], "summary": "", "language": "en"}
@@ -155,7 +195,7 @@ def detect_language(text: str) -> str:
     try:
         result = _call_gemini(
             f"Detect language. Reply ONLY with 2-letter ISO code:\n{text[:200]}",
-            max_tokens=5
+            max_tokens=10
         )
         return result.lower()[:2]
     except Exception:
@@ -178,7 +218,7 @@ Amount Due: INR {float(policy['premium_amount']):,.2f}
 Due Date: {policy['due_date']}
 Days Overdue: {policy.get('days_overdue', 0)}
 
-Write only the agent's speaking lines in a clear, numbered script (Opening, Main Message, Handle Objection, Close).
+Write only the agent speaking lines in a clear numbered script (Opening, Main Message, Handle Objection, Close).
 Keep it under 200 words. Be warm, professional, and compliant with TRAI regulations."""
 
     try:
