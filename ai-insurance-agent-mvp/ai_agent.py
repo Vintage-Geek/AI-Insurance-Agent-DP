@@ -2,7 +2,8 @@ import json
 import logging
 from typing import Dict, Optional, List
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 from config import config
 
