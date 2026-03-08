@@ -18,10 +18,15 @@ _pool: Optional[ThreadedConnectionPool] = None
 def get_pool() -> ThreadedConnectionPool:
     global _pool
     if _pool is None:
+        dsn = config.DATABASE_URL
+        # Add SSL for cloud databases (Supabase, Railway etc.)
+        if dsn and "localhost" not in dsn and "127.0.0.1" not in dsn:
+            if "sslmode" not in dsn:
+                dsn += "?sslmode=require"
         _pool = ThreadedConnectionPool(
             minconn=1,
             maxconn=10,
-            dsn=config.DATABASE_URL
+            dsn=dsn
         )
     return _pool
 
